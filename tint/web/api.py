@@ -1,23 +1,12 @@
 import json
 
 from twisted.web import resource
-from twisted.web._responses import BAD_REQUEST, BAD_GATEWAY
 
 from tint.log import Logger
 from tint.storage.permanent import TintURI
 from tint.ssl.keymagic import PublicKey
 
 log = Logger(system="TintWebAPI")
-
-
-class BadRequest(resource.ErrorPage):
-    def __init__(self):
-        resource.ErrorPage.__init__(self, BAD_REQUEST, "Bad Request", "Request malformed.")
-
-
-class BadGateway(resource.ErrorPage):
-    def __init__(self, msg):
-        resource.ErrorPage.__init__(self, BAD_GATEWAY, "Bad Gateway", msg)
 
 
 class WebAPI(resource.Resource):
@@ -36,9 +25,28 @@ class APIVersionOne(resource.Resource):
 class Request(object):
     def __init__(self, req):
         self.req = req
+        self.pathparts = req.path.split("/")
 
     def getParam(self, name, default=None):
         return self.req.args.get(name, [default])[0]
+
+    def setType(self, ctype):
+        self.req.setHeader('content-type', ctype)
+
+    def json(self, obj):
+        if self.req._disconnected:
+            return
+        self.setType("application/json")
+        return json.dumps(obj)
+
+    def success(self, data=None):
+        r = { 'success': True }
+        r.update(data or {})
+        return self.json(r)
+
+    def failure(self, reason):
+        r = { 'success': False, 'reason': str(reason) }
+        return self.json(r)
 
 
 class KeysResource(resource.Resource):
@@ -47,26 +55,26 @@ class KeysResource(resource.Resource):
         self.peerServer = peerServer
 
     def render_GET(self, req):
+        req = Request(req)
         keys = []
         for key in self.peerServer.keyStore.getAuthorizedKeysList():
             keys.append({ 'id': key.getKeyId(), 'key': str(key) })
-        result = { 'mykey':
-                   { 'id': self.peerServer.getKeyId(),
-                     'key': str(self.peerServer.getPublicKey()) },
-                   'authorized_keys': keys }
-        req.setHeader('content-type', "application/json")
-        return json.dumps(result)
+        data = { 'mykey':
+                 { 'id': self.peerServer.getKeyId(),
+                   'key': str(self.peerServer.getPublicKey()) },
+                 'authorized_keys': keys }
+        return req.success(data)
 
     def render_POST(self, req):
-        wreq = Request(req)
-        key = wreq.getParam('key')
-        name = wreq.getParam('name')
+        req = Request(req)
+        key = req.getParam('key')
+        name = req.getParam('name')
         try:
             publicKey = PublicKey(key)
             self.peerServer.keyStore.setAuthorizedKey(publicKey, name)
-            return "success"
+            return req.success()
         except Exception, err:
-            return str(err)
+            return req.failure(err)
 
 
 class StorageResource(resource.Resource):
@@ -79,30 +87,34 @@ class StorageResource(resource.Resource):
         return self
 
     def getKeyURI(self, req):
-        uri = "tint://%s" % "/".join(req.path.split('/')[4:])
+        uri = "tint://%s" % "/".join(req.pathparts[4:])
         return TintURI(uri)
 
     def render_GET(self, req):
+        req = Request(req)
         uri = self.getKeyURI(req)
-        result = self.peerServer.get(uri.host, uri.path)
-        if result is None:
-            return resource.NoResource("key not found").render(req)
-        return result
+        value = self.peerServer.get(uri.host, uri.path)
+        if value is None:
+            return req.failure("Key not found")
+        return req.success({ 'value': value })
 
     def render_PUT(self, req):
-        wreq = Request(req)
-        amount = wreq.getParam('amount', 1)
-        default = wreq.getParam('default', 0)
+        req = Request(req)
+        amount = req.getParam('amount', 1)
+        default = req.getParam('default', 0)
         uri = self.getKeyURI(req)
-        result = self.peerServer.incr(uri.host, uri.path, amount, default)
-        if result is None:
-            return BadGateway("Could not reach %s" % uri.host).render(req)
-        return result
+        try:
+            self.peerServer.incr(uri.host, uri.path, amount, default)
+            return req.success()
+        except Exception, err:
+            return req.failure(err)
 
     def render_POST(self, req):
-        wreq = Request(req)
-        data = wreq.getParam('data', "")
+        req = Request(req)
+        data = req.getParam('data', "")
         uri = self.getKeyURI(req)
-        if not self.peerServer.set(uri.host, uri.path, data):
-            return BadGateway("Could not reach %s" % uri.host).render(req)
-        return ""
+        try:
+            self.peerServer.set(uri.host, uri.path, data)
+            return req.success()
+        except Exception, err:
+            return req.failure(err)
