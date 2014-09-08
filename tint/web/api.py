@@ -20,6 +20,7 @@ class APIVersionOne(resource.Resource):
         resource.Resource.__init__(self)
         self.putChild('storage', StorageResource(peerServer))
         self.putChild('keys', KeysResource(peerServer))
+        self.putChild('permissions', PermissionsResource(peerServer))
 
 
 class Request(object):
@@ -115,6 +116,35 @@ class StorageResource(resource.Resource):
         uri = self.getKeyURI(req)
         try:
             self.peerServer.set(uri.host, uri.path, data)
+            return req.success()
+        except Exception, err:
+            return req.failure(err)
+
+
+class PermissionsResource(resource.Resource):
+    def __init__(self, peerServer):
+        resource.Resource.__init__(self)
+        self.peerServer = peerServer
+
+    def getChild(self, path, request):
+        return self
+
+    def render_GET(self, req):
+        req = Request(req)
+        # permissions = []
+        # for key in self.peerServer.keyStore.getAuthorizedKeysList():
+        #     id = key.getKeyId()
+        #     permissions.append({ 'id': id, 'permissions': self.peerServer.storage.retreiveAccess(id) })
+
+    def render_POST(self, req):
+        req = Request(req)
+        authorizedUser = req.pathparts[4]
+        permission = req.getParam("permission")
+
+        # TODO: check that authorizedUser is in the list of authorizedKeys
+
+        try:
+            self.peerServer.storage.grantAccess(authorizedUser, permission)
             return req.success()
         except Exception, err:
             return req.failure(err)
