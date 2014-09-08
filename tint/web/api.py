@@ -131,15 +131,21 @@ class PermissionsResource(resource.Resource):
 
     def render_GET(self, req):
         req = Request(req)
-        # permissions = []
-        # for key in self.peerServer.keyStore.getAuthorizedKeysList():
-        #     id = key.getKeyId()
-        #     permissions.append({ 'id': id, 'permissions': self.peerServer.storage.retreiveAccess(id) })
+        authorizedUser = req.pathparts[4]
+        permission = '/'.join(req.pathparts[5:])
+
+        # TODO: check that authorizedUser is in the list of authorizedKeys
+
+        try:
+            self.peerServer.storage.testAccess(authorizedUser, permission)
+            return req.success()
+        except Exception, err:
+            return req.failure(err)
 
     def render_POST(self, req):
         req = Request(req)
         authorizedUser = req.pathparts[4]
-        permission = req.getParam("permission")
+        permission = '/'.join(req.pathparts[5:])
 
         # TODO: check that authorizedUser is in the list of authorizedKeys
 
